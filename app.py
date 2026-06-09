@@ -1,367 +1,476 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
+import numpy as np
+import folium
+from streamlit_folium import st_folium
+import jwt
 import datetime
+import io
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
 # ==============================================================================
-# 1. GLOBAL PAGE CONFIGURATION
+# 🗄️ SYSTEM CONFIGURATIONS & MASTER SECURITY LAYER
 # ==============================================================================
-st.set_page_config(
-    page_title="EcoTrack: Green Schools Innovation",
-    layout="wide",
-    page_icon="🌱"
-)
+JWT_SECRET = "ecotrack_sovereign_climate_secret_2026"
 
-# ==============================================================================
-# 2. THE COMPLETE SPECIES INTEL DATABASE (26 UNIQUE ENTRIES)
-# ==============================================================================
-SPECIES_DATABASE = {
-    # INDIGENOUS & CLIMATE FOCUS
-    "Neem (Darbejiya)": {"botanical": "Azadirachta indica", "wd": 0.68, "gf": 0.025, "type": "Climate"},
-    "Acacia (Gum Arabic/Karo)": {"botanical": "Acacia senegal", "wd": 0.78, "gf": 0.022, "type": "Desert Control"},
-    "Baobab (Kuka)": {"botanical": "Adansonia digitata", "wd": 0.32, "gf": 0.035, "type": "Indigenous/Climate"},
-    "Tamarind (Tsamiya)": {"botanical": "Tamarindus indica", "wd": 0.85, "gf": 0.015, "type": "Fruit/Climate"},
-    "Desert Date (Adua)": {"botanical": "Balanites aegyptiaca", "wd": 0.74, "gf": 0.018, "type": "Desert Control"},
-    "African Locust Bean (Kalwa)": {"botanical": "Parkia biglobosa", "wd": 0.62, "gf": 0.021,
-                                    "type": "Indigenous/Climate"},
-    "Acacia nilotica (Bagaruwa)": {"botanical": "Vachellia nilotica", "wd": 0.80, "gf": 0.019,
-                                   "type": "Desert Control"},
-    "Moringa (Zogale)": {"botanical": "Moringa oleifera", "wd": 0.40, "gf": 0.045, "type": "Food/Climate"},
-    "Winterthorn (Gawo)": {"botanical": "Faidherbia albida", "wd": 0.58, "gf": 0.028, "type": "Climate"},
+# Initialize Persistent State Memory Engine
+if "database" not in st.session_state:
+    st.session_state.database = pd.DataFrame([
+        {
+            "id": 1001, "timestamp": "2026-03-12 09:15:00", "school": "Katsina Science Academy",
+            "lga": "Katsina", "species": "Neem (Azadirachta indica)", "planted": 250, "survived": 230,
+            "age_years": 3, "lat": 12.9894, "lon": 7.6031, "status": "Approved", "auditor": "Mal. Ibrahim",
+            "photo_verified": True, "carbon_kg": 250 * 1.5 * (1 + 3 * 0.08) * 3.67
+        },
+        {
+            "id": 1002, "timestamp": "2026-04-01 14:22:00", "school": "Daura Eco-Club High",
+            "lga": "Daura", "species": "Gum Arabic (Acacia senegal)", "planted": 180, "survived": 165,
+            "age_years": 2, "lat": 13.0333, "lon": 8.3167, "status": "Approved", "auditor": "Mal. Ibrahim",
+            "photo_verified": True, "carbon_kg": 180 * 1.2 * (1 + 2 * 0.08) * 3.67
+        },
+        {
+            "id": 1003, "timestamp": "2026-05-18 11:04:00", "school": "Funtua Environmental School",
+            "lga": "Funtua", "species": "Baobab (Adansonia digitata)", "planted": 300, "survived": 110,
+            "age_years": 1, "lat": 11.5233, "lon": 7.3094, "status": "Pending", "auditor": "Unassigned",
+            "photo_verified": False, "carbon_kg": 110 * 2.0 * (1 + 1 * 0.08) * 3.67
+        },
+        {
+            "id": 1004, "timestamp": "2026-06-02 16:45:00", "school": "Mani Forestry Secondary",
+            "lga": "Mani", "species": "Eucalyptus (Eucalyptus globulus)", "planted": 400, "survived": 395,
+            "age_years": 4, "lat": 12.8611, "lon": 7.8722, "status": "Flagged", "auditor": "Hajiya Amina",
+            "photo_verified": True, "carbon_kg": 395 * 1.0 * (1 + 4 * 0.08) * 3.67
+        }
+    ])
 
-    # FRUIT TREES
-    "Mango (Mangwaro)": {"botanical": "Mangifera indica", "wd": 0.52, "gf": 0.030, "type": "Fruit"},
-    "Cashew (Kashu)": {"botanical": "Anacardium occidentale", "wd": 0.50, "gf": 0.032, "type": "Fruit"},
-    "Guava (Gwayaba)": {"botanical": "Psidium guajava", "wd": 0.60, "gf": 0.028, "type": "Fruit"},
-    "Orange (Lemu)": {"botanical": "Citrus sinensis", "wd": 0.65, "gf": 0.020, "type": "Fruit"},
-    "Date Palm (Dabino)": {"botanical": "Phoenix dactylifera", "wd": 0.45, "gf": 0.025, "type": "Fruit"},
-    "Coconut Palm": {"botanical": "Cocos nucifera", "wd": 0.42, "gf": 0.028, "type": "Fruit"},
-    "Sheanut (Kade)": {"botanical": "Vitellaria paradoxa", "wd": 0.70, "gf": 0.014, "type": "Fruit/Economic"},
-
-    # TIMBER & FAST GROWTH
-    "Mahogany (Savanna)": {"botanical": "Khaya senegalensis", "wd": 0.72, "gf": 0.018, "type": "Timber/Climate"},
-    "African Mahogany (Rainforest)": {"botanical": "Khaya ivorensis", "wd": 0.65, "gf": 0.022,
-                                      "type": "Timber/Climate"},
-    "Teak": {"botanical": "Tectona grandis", "wd": 0.65, "gf": 0.024, "type": "Timber/Climate"},
-    "Iroko": {"botanical": "Milicia excelsa", "wd": 0.68, "gf": 0.017, "type": "Timber/Climate"},
-    "Gmelina": {"botanical": "Gmelina arborea", "wd": 0.45, "gf": 0.040, "type": "Timber/Climate"},
-    "Eucalyptus": {"botanical": "Eucalyptus camaldulensis", "wd": 0.55, "gf": 0.045, "type": "Timber"},
-
-    # ORNAMENTAL & SHADE
-    "Royal Palm": {"botanical": "Roystonea regia", "wd": 0.35, "gf": 0.030, "type": "Ornamental"},
-    "Flamboyant": {"botanical": "Delonix regia", "wd": 0.40, "gf": 0.035, "type": "Ornamental/Shade"},
-    "Bougainvillea": {"botanical": "Bougainvillea spp.", "wd": 0.45, "gf": 0.020, "type": "Ornamental"},
-    "Terminalia (Madagascar Almond)": {"botanical": "Terminalia mantaly", "wd": 0.55, "gf": 0.038,
-                                       "type": "Roadside/Shade"}
+SPECIES_REGISTRY = {
+    "Neem (Azadirachta indica)": {"factor": 1.5, "zone": "Arid/Sahel", "water_req": "Low"},
+    "Gum Arabic (Acacia senegal)": {"factor": 1.2, "zone": "Sahel/Savannah", "water_req": "Very Low"},
+    "Baobab (Adansonia digitata)": {"factor": 2.0, "zone": "Savannah", "water_req": "Low"},
+    "Eucalyptus (Eucalyptus globulus)": {"factor": 1.0, "zone": "Varied", "water_req": "High"},
+    "Mahogany (Khaya senegalensis)": {"factor": 2.5, "zone": "Sub-savannah", "water_req": "Medium"}
 }
 
-# ==============================================================================
-# 3. ROBUST DATABASE MANAGEMENT
-# ==============================================================================
-DB_FILE = "ecotrack_governance.db"
-
-
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS tree_audits (
-            audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            school_name TEXT NOT NULL,
-            lga_name TEXT NOT NULL,
-            tree_species TEXT NOT NULL,
-            trees_planted INTEGER NOT NULL,
-            trees_survived INTEGER NOT NULL,
-            audit_date TEXT NOT NULL,
-            green_credits REAL NOT NULL,
-            verification_status TEXT NOT NULL
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-
-init_db()
+ECO_CLUB_SYLLABUS = {
+    "Week 1-4": "Nursery Preparation, Soil Mix Dynamics & Seed Sowing Operations.",
+    "Week 5-8": "Micro-irrigation Strategies, Mulching & Arid Survival Safeguards.",
+    "Week 9-12": "Biometric Logging, Height/Canopy Tracking & Carbon Audit Simulators."
+}
 
 
 # ==============================================================================
-# 4. SCIENTIFIC CARBON ENGINE
+# 🧠 CORE PROCESSING ENGINES
 # ==============================================================================
-def calculate_carbon_impact(species_name, count):
-    spec = SPECIES_DATABASE.get(species_name, {"wd": 0.55, "gf": 0.022})
-    annual_kg_per_tree = (spec["wd"] * 50) * spec["gf"] * 1.28 * 0.47 * 3.67
-    return round(annual_kg_per_tree * count, 2)
+
+def validate_field_telemetry(planted, survived, lat, lon):
+    if survived > planted:
+        return False, "Validation Error: Survived tree count cannot be higher than planted tree count."
+    if not (11.0 <= lat <= 13.5) or not (6.5 <= lon <= 9.0):
+        return False, "Validation Error: Input GPS coordinates fall outside monitored regional boundaries."
+    return True, "Telemetry verified against structural constraints."
 
 
-# ==============================================================================
-# 5. SIDEBAR MANAGEMENT CONTROL & NAVIGATION
-# ==============================================================================
-with st.sidebar:
-    st.title("EcoTrack Gateway")
-    role = st.selectbox("Select Access Portal Profile:", [
-        "School Portal Gate",
-        "Eco-Club Resources Hub",  # <-- NEW PORTAL SECTION
-        "State Auditor Command"
-    ])
-    st.divider()
-    st.info(
-        "💡 Tip: Close this sidebar using the arrow ( < ) at the top left to maximize your interactive workspace views.")
+def compute_carbon_sequestration(species, survived, age):
+    factor = SPECIES_REGISTRY.get(species, {"factor": 1.0})["factor"]
+    age_multiplier = 1 + (age * 0.08)
+    carbon_absorbed = factor * survived * age_multiplier * 3.67
+    return round(carbon_absorbed, 2)
 
-# ==============================================================================
-# 6. APP ROUTING: SCHOOL ADMIN DATA ENTRY TERMINAL
-# ==============================================================================
-if role == "School Portal Gate":
-    st.title("🌱 EcoTrack: Green Schools Innovation")
-    st.markdown("### Regional School Environmental Reporting Hub")
 
-    st.subheader("📝 Log Tree Monitoring Activity")
-    with st.form("audit_form", clear_on_submit=True):
-        col_f1, col_f2 = st.columns(2)
-        school = col_f1.text_input("Official School Name:")
-        lga = col_f2.selectbox("Local Government Area (LGA):", [
-            "Katsina", "Dutsin-Ma", "Funtua", "Daura", "Batagarawa", "Mani", "Malumfashi", "Kaita", "Jibia", "Bakori"
-        ])
+def calculate_tradable_credits(carbon_kg):
+    return round(carbon_kg / 150.0, 4)
 
-        species = st.selectbox("Select Tree Species Asset Category:", sorted(list(SPECIES_DATABASE.keys())))
-        st.caption(
-            f"🧬 **Botanical Name:** *{SPECIES_DATABASE[species]['botanical']}* | 🌿 **Category:** {SPECIES_DATABASE[species]['type']}")
 
-        col_n1, col_n2, col_n3 = st.columns(3)
-        p_count = col_n1.number_input("Total Saplings Planted:", min_value=1, value=50)
-        s_count = col_n2.number_input("Verified Living Stands Survived:", min_value=1, value=45)
-        date = col_n3.date_input("Audit Collection Timestamp:", max_value=datetime.date.today())
+def run_survival_prediction_ai(planted, rainfall, soil, care):
+    base_probability = (0.4 * rainfall) + (0.3 * soil) + (0.3 * care)
+    survival_rate = min(max(base_probability, 0.08), 0.97)
+    predicted_yield = int(planted * survival_rate)
+    return {"rate": round(survival_rate * 100, 2), "yield": predicted_yield}
 
-        submit = st.form_submit_button("Transmit Metrics to Vetting Pipeline")
 
-        if submit:
-            if s_count > p_count:
-                st.error("❌ Data Entry Paradox: Survived asset totals cannot exceed planted amounts.")
-            else:
-                impact = calculate_carbon_impact(species, s_count)
-                credits = round(impact / 100, 2)
+def run_fraud_auditor_ai(planted, survived):
+    if planted == 0: return "Error"
+    ratio = survived / planted
+    if ratio > 0.96:
+        return "⚠️ ANOMALY DETECTED: Suspiciously high survival rate. Flagged for manual audit verification."
+    if ratio < 0.12:
+        return "⚠️ WARNING: Abnormally low survival rate. Potential drought stress or intervention required."
+    return "✅ VERIFIED: Data matches standard ecological patterns."
 
-                conn = sqlite3.connect(DB_FILE)
-                conn.execute("""INSERT INTO tree_audits 
-                    (school_name, lga_name, tree_species, trees_planted, trees_survived, audit_date, green_credits, verification_status) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                             (school, lga, species, p_count, s_count, str(date), credits, "Pending Approval"))
-                conn.commit()
-                conn.close()
 
-                st.success(
-                    f"🎉 Audit Data Dispatched! Estimated sequestration: **{impact:,} kg CO2e/year** (Yielding {credits} Pending Credits).")
+def issue_access_jwt(username, role):
+    payload = {
+        "sub": username, "role": role,
+        "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=2)
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+
+def parse_access_jwt(token):
+    try:
+        return jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+    except:
+        return None
+
 
 # ==============================================================================
-# 7. NEW FEATURE ROUTING: ECO-CLUB RESOURCES & ACTION PLAN HUB
+# 📄 AUTOMATED REPORT GENERATOR
 # ==============================================================================
-elif role == "Eco-Club Resources Hub":
-    st.title("📚 Eco-Club Toolkits & Resources Center")
-    st.markdown("### Empowering Student Environmental Clubs with Practical Frameworks")
+def compile_sovereign_pdf(metrics, dataframe):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+    story = []
 
-    tab_templates, tab_seasonal_guide = st.tabs([
-        "📋 Action Plan & Reporting Templates",
-        "🌦 Climatic Care Guide"
-    ])
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('DocTitle', parent=styles['Heading1'], fontSize=22,
+                                 textColor=colors.HexColor('#1E4620'), spaceAfter=15)
+    section_style = ParagraphStyle('SecTitle', parent=styles['Heading2'], fontSize=14,
+                                   textColor=colors.HexColor('#2E6930'), spaceBefore=12, spaceAfter=8)
+    body_style = ParagraphStyle('Body', parent=styles['Normal'], fontSize=10, spaceAfter=6)
 
-    with tab_templates:
-        st.subheader("Downloadable Club Resources")
-        st.write("Equip your environmental club coordinators and students with standardized planning frameworks.")
+    story.append(Paragraph("EcoTrack Climate Impact Report", title_style))
+    story.append(Paragraph(
+        f"<b>Platform State:</b> Official Compliance Matrix | <b>Generated:</b> {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        body_style))
+    story.append(Spacer(1, 15))
 
-        # 1. Action Plan Template Content Generation
-        action_plan_text = """================================================================
-ECOTRACK ENVIRONMENTAL CLUB: ANNUAL SCHOOL GREENING ACTION PLAN
-================================================================
-School Name: __________________________________
-LGA Location: _________________________________
-Academic Session/Year: 2026 / 2027
-Club Coordinator Name: ________________________
+    summary_data = [
+        ["Total Planted Assets", "Verified Survival Volume", "Aggregate Carbon Offset", "Minted Carbon Credits"],
+        [f"{metrics['planted']}", f"{metrics['survived']}", f"{metrics['carbon']} kg", f"{metrics['credits']} VCU"]
+    ]
+    t_summary = Table(summary_data, colWidths=[130, 130, 130, 130])
+    t_summary.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2E6930')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+        ('BACKGROUND', (0, 1), (-1, 1), colors.HexColor('#F4F9F4')),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#1E4620'))
+    ]))
+    story.append(t_summary)
+    story.append(Spacer(1, 20))
 
-1. TARGET SETTING
-   * Target Number of Seedlings to Plant: _________
-   * Chosen Primary Tree Species: _________________
-   * Expected Minimum Survival Rate Target: ______ %
+    story.append(Paragraph("Project Registry Audit Log", section_style))
+    table_content = [["ID", "School / Institution", "LGA", "Species", "Planted", "Survived", "Status"]]
+    for _, r in dataframe.iterrows():
+        table_content.append(
+            [str(r['id']), r['school'], r['lga'], r['species'].split(" (")[0], str(r['planted']), str(r['survived']),
+             r['status']])
 
-2. STUDENT LAND STEWARDSHIP ASSIGNMENTS
-   * Team Lead for Nursery Care: __________________
-   * Team Lead for Watering Schedule: ____________
-   * Team Lead for Weekly Audit Counting: ________
+    t_detail = Table(table_content, colWidths=[35, 140, 70, 95, 55, 55, 60])
+    t_detail.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4A5D4E')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F9FBF9')])
+    ]))
+    story.append(t_detail)
 
-3. STRATEGIC TIMELINES & MAINTENANCE
-   * Date of Initial Soil Preparation: ___________
-   * Projected Tree Planting Launch Date: _________
-   * Arid Weather Protective Measures (Dry Season Care):
-     ___________________________________________________________
-     ___________________________________________________________
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
 
-4. MONITORING LOG FRAMEWORK
-   * Month 1 Count: _____ Alive | Month 3 Count: _____ Alive
-   * Month 6 Count: _____ Alive | Month 12 Count: _____ Alive
-
-Approved By Principal / Coordinator Sign-off: __________________
-"""
-
-        # 2. Club Constitution Setup Text
-        constitution_text = """================================================================
-STANDARD MANUAL: ECO-CLUB STRUCTURE & CONSTITUTION GUIDELINES
-================================================================
-1. CORE OBJECTIVE
-   To foster strict environmental accountability, build active leadership skills 
-   among youth, and institutionalize green governance at the grassroots local school level.
-
-2. EXEC BOARD STRUCTURE
-   - President / Climate Captain: Runs bi-weekly meetings and sets planting targets.
-   - Vice President / Data Lead: Inputs survival tracking field data into EcoTrack.
-   - Logistics Officer: Manages organic compost supplies, tools, and mulch storage.
-
-3. SUSTAINABILITY COMMITMENT
-   Every club member is assigned custody over specific seedling zones. Members are 
-   responsible for daily watering and shielding seedlings from roaming livestock.
-"""
-
-        c1, c2 = st.columns(2)
-        with c1:
-            st.info("📋 **Club Activity Action Plan Template**")
-            st.caption("A structured blueprint to map targets, student roles, schedules, and maintenance routines.")
-            st.download_button(
-                label="📥 Download Action Plan Template (TXT)",
-                data=action_plan_text,
-                file_name="EcoTrack_School_Action_Plan.txt",
-                mime="text/plain"
-            )
-
-        with c2:
-            st.info("📜 **Standard Eco-Club Constitution Manual**")
-            st.caption(
-                "Guidelines for structural leadership roles, responsibilities, and establishing active club branches.")
-            st.download_button(
-                label="📥 Download Club Structure Manual (TXT)",
-                data=constitution_text,
-                file_name="EcoTrack_Club_Structure_Manual.txt",
-                mime="text/plain"
-            )
-
-    with tab_seasonal_guide:
-        st.subheader("🌦 Interactive Localized Climate Care Guide")
-        st.write(
-            "Select the current local climatic window to view immediate practical steps required to maintain tree stock survival numbers:")
-
-        season_select = st.radio("Current Weather Season Scope:",
-                                 ["Dry Arid Season (Harmattan / Intense Sun)", "Wet Rainy Season"])
-
-        if season_select == "Dry Arid Season (Harmattan / Intense Sun)":
-            st.warning("⚠️ **Dry Season Maintenance Pipeline Activated (High Risk to Saplings)**")
-            st.markdown("""
-            * **Watering Frequencies:** Seedlings must be watered consistently every early morning (before 8:30 AM) or late evening to reduce evaporative losses.
-            * **Mulching Layers:** Place dry leaves, grass, or agricultural wood waste around the base of the trunk to retain subsoil moisture.
-            * **Livestock Barriers:** Construct secure bamboo or recycled wood tree guards around young saplings to block damage from roaming cattle, goats, and sheep.
-            """)
-        else:
-            st.success("🌧️ **Wet Season Abundance Phase Activated**")
-            st.markdown("""
-            * **Soil Aeration:** Gently loosen waterlogged topsoil around root areas to promote proper drainage and nitrogen absorption.
-            * **Weeding Controls:** Pull out competing grasses and invasive weeds within a 1-meter radius around your tree assets to ensure full sunlight exposure.
-            * **Data Update:** Take clean baseline audit verification photos while growth cycles are peaking!
-            """)
 
 # ==============================================================================
-# 8. APP ROUTING: STATE AUDITOR COMMAND CONSOLE
+# 💻 STREAMLIT UNIFIED USER INTERFACE
 # ==============================================================================
-elif role == "State Auditor Command":
-    st.title("🛡️ State Auditor Control Console")
-    st.markdown("### Real-Time Pipeline Verification & Validation Engine")
+st.set_page_config(page_title="EcoTrack Platform", layout="wide", page_icon="🌱")
 
-    conn = sqlite3.connect(DB_FILE)
-    pending = pd.read_sql_query("SELECT * FROM tree_audits WHERE verification_status='Pending Approval'", conn)
-    conn.close()
+if "session_token" not in st.session_state:
+    st.session_state.session_token = None
+if "current_user" not in st.session_state:
+    st.session_state.current_user = None
+if "role" not in st.session_state:
+    st.session_state.role = "Guest"
 
-    if pending.empty:
-        st.info("✅ The real-time review queue is completely clear. No entries are pending verification.")
-    else:
-        st.warning(f"⚠️ Found {len(pending)} monitoring submissions awaiting formal verification vetting.")
-        st.dataframe(pending, use_container_width=True, hide_index=True)
+# Sidebar Branding
+st.sidebar.image(
+    "https://img.icons8.com/external-flatart-icons-flat-flatarticons/128/000000/external-ecology-ecology-flatart-icons-flat-flatarticons-2.png",
+    width=70)
+st.sidebar.title("EcoTrack Control Hub")
+st.sidebar.caption("System Status: Active")
 
-        with st.expander("👉 Open Action Validation Drawer"):
-            audit_id_to_approve = st.number_input("Enter Audit ID Target to Approve:", min_value=1, step=1)
-            action_btn = st.button("Approve & Merge into Public Dashboard")
-
-            if action_btn:
-                conn = sqlite3.connect(DB_FILE)
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM tree_audits WHERE audit_id=?", (audit_id_to_approve,))
-                if cursor.fetchone() is None:
-                    st.error("Target verification ID not found in relational ledger data indexes.")
-                else:
-                    cursor.execute("UPDATE tree_audits SET verification_status='Approved' WHERE audit_id=?",
-                                   (audit_id_to_approve,))
-                    conn.commit()
-                    st.success(
-                        f"Audit Record #{audit_id_to_approve} successfully validated and merged into analytics stream!")
-                    st.rerun()
-                conn.close()
-
-# ==============================================================================
-# 9. LIVE COMPREHENSIVE ANALYTICS DISPLAY PANEL
-# ==============================================================================
-st.divider()
-st.subheader("📊 Live EcoTrack Regional Sustainability Standings")
-
-conn = sqlite3.connect(DB_FILE)
-df = pd.read_sql_query("SELECT * FROM tree_audits", conn)
-conn.close()
-
-if not df.empty and "lga_name" in df.columns:
-    total_p = df["trees_planted"].sum()
-    total_s = df["trees_survived"].sum()
-    overall_survival_rate = (total_s / total_p * 100) if total_p > 0 else 0
-    total_credits = round(df["green_credits"].sum(), 2)
-    total_co2_kg = total_s * 22
-
-    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-    col_m1.metric("Total Planted Trees", f"{total_p:,}")
-    col_m2.metric("Verified Survived Trees", f"{total_s:,} ({overall_survival_rate:.1f}%)")
-    col_m3.metric("Aggregated Carbon Offset (kg/yr)", f"{total_co2_kg:,.2f}")
-    col_m4.metric("Total Generated Green Credits", f"{total_credits:,}")
-
-    tab_overview, tab_lga, tab_seasonal = st.tabs([
-        "🌳 Botanical Asset Profiles",
-        "🏆 LGA Sustainability Leaderboard",
-        "🌦 Climatic Seasonal Patterns"
-    ])
-
-    with tab_overview:
-        col_c1, col_c2 = st.columns([2, 1])
-        with col_c1:
-            st.write("#### Verified Living Trees by Botanical Common Specification")
-            species_chart_df = df.groupby("tree_species")["trees_survived"].sum().sort_values(ascending=False)
-            st.bar_chart(species_chart_df, color="#2E8B57")
-        with col_c2:
-            st.write("#### Active Ledger Sync")
-            st.dataframe(df[["school_name", "tree_species", "trees_survived", "verification_status"]],
-                         use_container_width=True, hide_index=True)
-
-    with tab_lga:
-        st.write("#### 🏆 Top Performing Local Government Areas (LGAs)")
-        lga_chart_df = df.groupby("lga_name")["trees_survived"].sum().sort_values(ascending=False)
-        st.bar_chart(lga_chart_df, color="#4C9A2A")
-
-    with tab_seasonal:
-        st.write("#### 🌦 Deployment Survival Rates split by Seasonal Windows")
-        df['audit_date'] = pd.to_datetime(df['audit_date'])
-        df['Season'] = df['audit_date'].dt.month.apply(
-            lambda m: 'Wet Season (June-Sept)' if m in [6, 7, 8, 9] else 'Dry Season (Arid/Harmattan)')
-
-        seasonal_summary = df.groupby('Season').agg({
-            'trees_planted': 'sum',
-            'trees_survived': 'sum'
-        }).reset_index()
-        seasonal_summary['Survival Rate (%)'] = (
-                    seasonal_summary['trees_survived'] / seasonal_summary['trees_planted'] * 100).round(1)
-
-        col_s1, col_s2 = st.columns(2)
-        with col_s1:
-            st.bar_chart(data=seasonal_summary, x='Season', y='Survival Rate (%)', color="#D2691E")
-        with col_s2:
-            st.dataframe(seasonal_summary, use_container_width=True, hide_index=True)
+# Authentication Control
+st.sidebar.markdown("---")
+st.sidebar.subheader("🔐 Account Login")
+if st.session_state.session_token is None:
+    user_input = st.sidebar.text_input("Username / Identity Handle", value="katsina_officer")
+    role_input = st.sidebar.selectbox("Access Level Role", ["School Administrator", "State Auditor", "NGO Verifier"])
+    if st.sidebar.button("Establish Secure Session"):
+        st.session_state.session_token = issue_access_jwt(user_input, role_input)
+        st.session_state.current_user = user_input
+        st.session_state.role = role_input
+        st.rerun()
 else:
-    st.info(
-        "The localized database file is clear. Submit your first school activity report above to initiate live analytics charts.")
+    st.sidebar.success(f"User: {st.session_state.current_user}")
+    st.sidebar.info(f"Role Profile: {st.session_state.role}")
+    if st.sidebar.button("Log Out"):
+        st.session_state.session_token = None
+        st.session_state.current_user = None
+        st.session_state.role = "Guest"
+        st.rerun()
+
+# User Navigation Map
+navigation_node = st.sidebar.radio(
+    "Platform Navigation Links",
+    ["1. Central Registry Dashboard", "2. Report Tree Plantings", "3. Predictive Ecological AI",
+     "4. Geospatial Map Layers", "5. Approvals & Audit Queue", "6. Carbon Valuation Ledger"]
+)
+
+# Global Telemetry Math Calculations
+df_current = st.session_state.database
+calc_planted = df_current["planted"].sum()
+calc_survived = df_current["survived"].sum()
+calc_survival_rate = round((calc_survived / calc_planted) * 100, 2) if calc_planted > 0 else 0.00
+calc_carbon = round(df_current["carbon_kg"].sum(), 2)
+calc_credits = calculate_tradable_credits(calc_carbon)
+
+# ------------------------------------------------------------------------------
+# LINK 1: CENTRAL DASHBOARD
+# ------------------------------------------------------------------------------
+if navigation_node == "1. Central Registry Dashboard":
+    st.title("🌱 Central Environmental Registry Dashboard")
+    st.subheader("Statewide Ecological Project Tracking Infrastructure")
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Registered Planted Trees", f"{calc_planted:,} Trees")
+    m2.metric("Average Tree Survival Rate", f"{calc_survival_rate}%")
+    m3.metric("Carbon Sequestration Mass", f"{calc_carbon:,} kg CO2e")
+    m4.metric("Minted Carbon Credits", f"🪙 {calc_credits:,} VCU")
+
+    st.markdown("---")
+
+    left, right = st.columns([2, 1])
+    with left:
+        st.subheader("📋 Active Environmental Records Ledger")
+        st.dataframe(df_current, use_container_width=True)
+    with right:
+        st.subheader("📄 Automated Compliance Export")
+        st.write("Generate a signed document breakdown matching state and NGO reporting guidelines.")
+
+        if st.session_state.session_token:
+            payload_data = {"planted": calc_planted, "survived": calc_survived, "carbon": calc_carbon,
+                            "credits": calc_credits}
+            pdf_stream = compile_sovereign_pdf(payload_data, df_current)
+            st.download_button(
+                label="📥 Download Certified PDF Report",
+                data=pdf_stream,
+                file_name=f"EcoTrack_Climate_Report_{datetime.date.today()}.pdf",
+                mime="application/pdf"
+            )
+        else:
+            st.warning(
+                "🔒 Access Restricted: Please authenticate via the sidebar login window to generate official reports.")
+
+# ------------------------------------------------------------------------------
+# LINK 2: REPORT PLANTINGS (SCHOOL UPLOAD)
+# ------------------------------------------------------------------------------
+elif navigation_node == "2. Report Tree Plantings":
+    st.title("📥 School Tree Planting Data Log")
+    st.subheader("Submit New Field Telemetry for Verification")
+
+    if st.session_state.role not in ["School Administrator", "State Auditor"]:
+        st.error(
+            "🚫 Access Denied: Your account profile does not possess permissions to log raw field planting telemetry data.")
+    else:
+        with st.form("ingestion_form"):
+            st.subheader("New Project Registration Form")
+            c1, c2 = st.columns(2)
+            with c1:
+                sch_name = st.text_input("School / Institution Name", placeholder="e.g., Jibia Science Academy")
+                lga_select = st.selectbox("LGA Jurisdiction",
+                                          ["Katsina", "Daura", "Funtua", "Mani", "Jibia", "Malumfashi", "Bakori"])
+                species_select = st.selectbox("Ecological Tree Species", list(SPECIES_REGISTRY.keys()))
+                age_input = st.number_input("Tree Growth Duration (Years)", min_value=1, max_value=25, value=2)
+            with c2:
+                num_planted = st.number_input("Total Trees Planted", min_value=1, value=100, step=5)
+                num_survived = st.number_input("Total Trees Survived", min_value=0, value=90, step=5)
+                geo_lat = st.number_input("Location Latitude", value=12.9800, format="%.4f")
+                geo_lon = st.number_input("Location Longitude", value=7.6100, format="%.4f")
+
+            uploaded_photo = st.file_uploader("🖼️ Upload Field Photographic Evidence", type=["jpg", "png", "jpeg"])
+            submit_log = st.form_submit_button("Submit Data Entry to Verification Queue")
+
+            if submit_log:
+                if not sch_name:
+                    st.error("Data submission failed: Institution Name field cannot be empty.")
+                else:
+                    val_ok, val_msg = validate_field_telemetry(num_planted, num_survived, geo_lat, geo_lon)
+                    if not val_ok:
+                        st.error(val_msg)
+                    else:
+                        ai_fraud_verdict = run_fraud_auditor_ai(num_planted, num_survived)
+                        calculated_carbon_mass = compute_carbon_sequestration(species_select, num_survived, age_input)
+
+                        status_assignment = "Flagged" if "⚠️" in ai_fraud_verdict else "Pending"
+                        photo_present = True if uploaded_photo is not None else False
+
+                        new_record = {
+                            "id": int(st.session_state.database["id"].max() + 1),
+                            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "school": sch_name, "lga": lga_select, "species": species_select,
+                            "planted": num_planted, "survived": num_survived, "age_years": age_input,
+                            "lat": geo_lat, "lon": geo_lon, "status": status_assignment,
+                            "auditor": "Unassigned", "photo_verified": photo_present,
+                            "carbon_kg": calculated_carbon_mass
+                        }
+
+                        st.session_state.database = pd.concat([st.session_state.database, pd.DataFrame([new_record])],
+                                                              ignore_index=True)
+                        st.success(f"Data logged into queue successfully. Initial Automated Review: {ai_fraud_verdict}")
+
+# ------------------------------------------------------------------------------
+# LINK 3: AI ENGINE
+# ------------------------------------------------------------------------------
+elif navigation_node == "3. Predictive Ecological AI":
+    st.title("🤖 Predictive Ecological AI Model")
+    st.subheader("Machine Learning Growth Simulations & Anomaly Detection Framework")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("### 🔮 Survival Rate Yield Simulator")
+        st.write("Forecast long-term reforestation success using dynamic environmental variables.")
+
+        sim_planted = st.number_input("Planned Plantation Scale (Trees)", min_value=10, value=1000, step=50)
+        sim_rain = st.slider("Environmental Variable: Rainfall Index", 0.0, 1.0, 0.65)
+        sim_soil = st.slider("Soil Quality Composition Index", 0.0, 1.0, 0.70)
+        sim_care = st.slider("Human Care & Irrigation Index", 0.0, 1.0, 0.85)
+
+        if st.button("Run AI Growth Projection"):
+            ai_output = run_survival_prediction_ai(sim_planted, sim_rain, sim_soil, sim_care)
+            st.metric(label="Predicted Project Survival Confidence", value=f"{ai_output['rate']}%")
+            st.metric(label="Projected Forest Maturation Yield", value=f"{ai_output['yield']} Active Trees")
+
+    with col2:
+        st.markdown("### 🧠 Field Record Integrity Audit Scanner")
+        st.write("Run data checks against automated ecological probability models to catch discrepancies.")
+
+        chk_planted = st.number_input("Audit Baseline: Total Planted", min_value=1, value=500)
+        chk_survived = st.number_input("Audit Baseline: Reported Survived", min_value=0, value=495)
+
+        if st.button("Execute Integrity Scan"):
+            fraud_verdict = run_fraud_auditor_ai(chk_planted, chk_survived)
+            if "⚠️" in fraud_verdict:
+                st.error(fraud_verdict)
+            else:
+                st.success(fraud_verdict)
+
+# ------------------------------------------------------------------------------
+# LINK 4: GIS INTERACTIVE MAP
+# ------------------------------------------------------------------------------
+elif navigation_node == "4. Geospatial Map Layers":
+    st.title("🛰️ Geospatial Intelligence Map Layer")
+    st.subheader("High-Resolution Spatial Distribution of Tree-Planting Projects")
+
+    map_anchor = [12.9894, 7.6031]
+    gis_map = folium.Map(location=map_anchor, zoom_start=8, tiles="OpenStreetMap")
+
+    for _, entity in st.session_state.database.iterrows():
+        color_matrix = "green" if entity["status"] == "Approved" else (
+            "orange" if entity["status"] == "Pending" else "red")
+        popup_payload = f"""
+        <strong>{entity['school']}</strong><br/>
+        LGA Area: {entity['lga']}<br/>
+        Asset Metrics: {entity['survived']}/{entity['planted']} Survived<br/>
+        Carbon Profile: {entity['carbon_kg']} kg CO2e<br/>
+        Verification Status: {entity['status']}
+        """
+        folium.Marker(
+            location=[entity["lat"], entity["lon"]],
+            popup=folium.Popup(popup_payload, max_width=300),
+            icon=folium.Icon(color=color_matrix, icon="leaf")
+        ).add_to(gis_map)
+
+    st_folium(gis_map, width=1200, height=550)
+    st.caption(
+        "🟢 Green Pins: Verified & Approved Projects | 🟠 Orange Pins: In Verification Queue | 🔴 Red Pins: Flagged for Revision")
+
+# ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# LINK 5: APPROVALS & AUDITS
+# ------------------------------------------------------------------------------
+elif navigation_node == "5. Approvals & Audit Queue":
+    st.title("🏛️ Project Verification & Governance Queue")
+    st.subheader("Official Data Validation Workflow Management Interface")
+
+    if st.session_state.role not in ["State Auditor"]:
+        st.error(
+            "🚫 Access Denied: Your account profile does not possess permissions to edit or manage file audit queues.")
+    else:
+        st.markdown("### Active Pending Submissions Log")
+        log_records = st.session_state.database
+
+        active_tasks = 0
+        for idx, row in log_records.iterrows():
+            if row["status"] in ["Pending", "Flagged"]:
+                active_tasks += 1
+                with st.expander(f"📋 Review Task: Record ID {row['id']} — {row['school']}"):
+                    st.write(f"**LGA Jurisdiction:** {row['lga']} | **Tree Species Registered:** {row['species']}")
+                    st.write(
+                        f"**Metrics:** Planted Base Volume = {row['planted']} | Survived Active Volume = {row['survived']}")
+                    st.write(f"**Photographic Verification Attached:** {row['photo_verified']}")
+
+                    action_col1, action_col2 = st.columns(2)
+                    if action_col1.button("Approve & Certify Data", key=f"app_{row['id']}"):
+                        st.session_state.database.at[idx, "status"] = "Approved"
+                        st.session_state.database.at[idx, "auditor"] = st.session_state.current_user
+                        st.toast(f"Record {row['id']} verified and logged to registry ledger.", icon="✅")
+                        st.rerun()
+                    if action_col2.button("Flag for Re-inspection", key=f"flg_{row['id']}"):
+                        st.session_state.database.at[idx, "status"] = "Flagged"
+                        st.session_state.database.at[idx, "auditor"] = st.session_state.current_user
+                        st.toast(f"Record {row['id']} quarantined.", icon="🚨")
+                        st.rerun()
+
+        if active_tasks == 0:
+            st.success("All caught up! No projects currently await audit review.")
+
+# ------------------------------------------------------------------------------
+# LINK 6: CARBON VALUATION FINTECH LEDGER
+# ------------------------------------------------------------------------------
+elif navigation_node == "6. Carbon Valuation Ledger":
+    st.title("🪙 Carbon Asset Valuation & Credits Ledger")
+    st.subheader("Financial Value Conversion Metrics for Environmental Data")
+
+    ledger_data = st.session_state.database.copy()
+    ledger_data["Carbon Weight (kg CO2e)"] = ledger_data["carbon_kg"]
+    ledger_data["Tradable Credit Yield (VCU)"] = ledger_data["Carbon Weight (kg CO2e)"].apply(
+        calculate_tradable_credits)
+
+    approved_credits = ledger_data[ledger_data["status"] == "Approved"]["Tradable Credit Yield (VCU)"].sum()
+    quarantined_credits = ledger_data[ledger_data["status"] == "Flagged"]["Tradable Credit Yield (VCU)"].sum()
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Verified Liquid Carbon Credits", f"{round(approved_credits, 4)} VCU",
+              help="Credits generated from fully certified projects.")
+    c2.metric("Quarantined Credit Pool", f"{round(quarantined_credits, 4)} VCU",
+              help="Speculative credits held back due to audit flags.")
+    c3.metric("Projected Financial Value ($USD)", f"${round(approved_credits * 24.50, 2)}",
+              help="Calculated market estimation baseline ($24.50/ton).")
+
+    st.markdown("---")
+    st.subheader("Sovereign Carbon Value Matrix Ledger")
+    st.dataframe(
+        ledger_data[["id", "school", "species", "status", "Carbon Weight (kg CO2e)", "Tradable Credit Yield (VCU)"]],
+        use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("🌱 Eco-Club Curricular Integration Framework")
+    st.info("Reforestation projects log metrics corresponding directly to local institutional academic timelines:")
+
+    cx1, cx2, cx3 = st.columns(3)
+    with cx1:
+        st.markdown("**Phase 1: Nursery Phase**")
+        st.caption(ECO_CLUB_SYLLABUS["Week 1-4"])
+    with cx2:
+        st.markdown("**Phase 2: Irrigation & Care**")
+        st.caption(ECO_CLUB_SYLLABUS["Week 5-8"])
+    with cx3:
+        st.markdown("**Phase 3: Quantification**")
+        st.caption(ECO_CLUB_SYLLABUS["Week 9-12"])
